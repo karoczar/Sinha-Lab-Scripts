@@ -1,0 +1,231 @@
+---
+title: "Correlate analysis and visualization of correlation matrix"
+author: "Xiaoyi"
+date: "6/20/2019"
+output: html_document
+---
+
+```{r}
+# Load data
+counts.data=read.csv("counts_tpm.csv",row.names = 1)
+leafgo=read.delim("Sugar and leaf GO description.txt",header = T)
+
+DEG.counts=counts.data[rownames(counts.data) %in% leafgo$itag==T,]
+
+#rm MRM
+DEG.counts=DEG.counts[-grep("MRM",colnames(DEG.counts))]
+DEG.counts=DEG.counts[rowSums(DEG.counts >= 1) >= 0.5,]
+# write.csv(DEG.counts,"DEG_sig_curated.counts.csv")
+
+head(DEG.counts)
+my_data=t(DEG.counts)
+rm(counts.data,leafgo,DEG.counts)
+# head(my_data)
+
+# check distribution
+# Y.u=t(log(DEG.counts+(1e-6)))
+# par(mfrow=c(2,1))
+# hist(as.matrix(DEG.counts), breaks=50, main="normalized counts")
+# hist(as.vector(Y.u), breaks=50, main="logarithm of the normalized counts")
+# par(mfrow=c(1,1))
+
+```
+
+```{r}
+# install.packages("Hmisc")
+# use Hmisc R package to calculate the correlation and p-values.
+library("Hmisc")
+# rcorr() function
+res2 <- rcorr(as.matrix(my_data),type = "pearson") #type = c("pearson","spearman")
+# res2
+# Extract the correlation coefficients and  p-values
+r.value0=res2$r
+p.value0=res2$P
+# adj.p0=p.adjust(p.value0, method = "BH") # c("holm", "hochberg", "hommel", "bonferroni", "BH", "BY", "fdr", "none")
+adj.p0=apply(p.value0, 2, p.adjust, method="BH")
+adj.p1=apply(p.value0, 1, p.adjust, method="BH")
+
+p.res2=res2
+p.res2$P=adj.p0
+rm(r.value0,p.value0,adj.p0,adj.p1)
+
+```
+
+```{r}
+# # Get some colors
+col1 <- colorRampPalette(c("#67001F", "#B2182B", "#D6604D", "#F4A582",
+                            "#FDDBC7", "#FFFFFF", "#D1E5F0", "#92C5DE",
+                            "#4393C3", "#2166AC", "#053061"))
+col2 <- colorRampPalette(c("#053061", "#2166AC", "#4393C3", "#92C5DE", 
+                           "#D1E5F0", "#FFFFFF", "#FDDBC7", "#F4A582",
+                           "#D6604D", "#B2182B", "#67001F"))
+library(corrplot)
+
+pdf("corr plot.pdf",height = 5,width = 6)
+pp1=corrplot(p.res2$r,method = "color",#p2=
+         order="hclust",#"alphabet",
+         col = col2(200),cl.length=5,
+         tl.col="black", tl.srt=45, tl.cex = .1,
+         p.mat = p.res2$P, sig.level = 0.01, insig = "blank")
+
+print(pp1)
+dev.off()
+
+library(plyr)
+#save corrplot data with hclust order and GO Terms
+gene.des0= read.delim("Sugar and leaf GO description.txt")
+pp=data.frame(rownames(pp1));names(pp)="itag";pp$order=rownames(pp)
+pp=join(pp,gene.des0,"itag")
+# write.csv(pp,"leaf_sugar_GO genes corr1 order.csv")
+rm(gene.des0,pp,pp1)
+
+```
+
+```{r}
+or_data=read.csv("leaf_sugar_GO genes corr1 order.csv", header = T) 
+corr.p=data.frame(p.res2$P) 
+corr.r=data.frame(p.res2$r)
+
+# reorder table function
+dat_re=function(x,or_data){
+  x=x; or_data=or_data; n=nrow(or_data)
+  #row reorder
+  tmp_dat1=data.frame()
+  for (i in n:1) {
+    e_dat1=subset(x, rownames(x) %in% or_data$itag[i] == T)
+    tmp_dat1=rbind(e_dat1,tmp_dat1)
+  }
+  #col reorder
+  tmp_dat2=tmp_dat1[colnames(tmp_dat1) %in% or_data$itag[n] == T]
+  for (i in (n-1):1) {
+    e_dat1=tmp_dat1[colnames(tmp_dat1) %in% or_data$itag[i] == T]
+    tmp_dat2=cbind(e_dat1,tmp_dat2)
+  }
+  return(tmp_dat2)
+}
+corr.p1=as.matrix(dat_re(corr.p,or_data)) 
+corr.r1=as.matrix(dat_re(corr.r,or_data))
+#corrplot with out hclust using reorder data and compare
+pdf("corr plot1.pdf",height = 5,width = 6)
+pp2 = corrplot(corr.r1, method = "color",
+         #order="hclust",#"alphabet",
+         col = col2(200), cl.length = 5,
+         tl.col="black", tl.srt=45, tl.cex = .1,
+         p.mat = corr.p1, sig.level = 0.01, insig = "blank")
+print(pp2)
+dev.off()
+rm(corr.p,corr.r,pp2)
+```
+
+```{r}
+corr.p1=as.data.frame(corr.p1); corr.r1=as.data.frame(corr.r1)
+
+# G6PT2.p=as.matrix(corr.p1[row.names(corr.p1) %in% c("Solyc09g074920","Solyc09g083100",
+#                   "Solyc05g045670","Solyc08g067500","Solyc01g081250") == T,])  
+G6PT2.p=as.matrix(corr.p1[135:140,])
+G6PT2.r=as.matrix(corr.r1[135:140,]) 
+
+pdf("G6PT2-1.pdf",height = 1,width = 25)
+corrplot(G6PT2.r,method = "color",
+         col = col2(200), cl.length=3,
+         tl.col="black", tl.srt=45, tl.cex = 0.2,cl.cex = 1/par("cex"),
+         p.mat = G6PT2.p, sig.level = 0.01, insig = "blank")
+dev.off()
+
+#plot color annotation
+pp20=or_data
+col<- colorRampPalette(c("blue", "red"))(length(unique(pp20$type2)))
+pp20$itag=factor(pp20$itag,levels = pp20$itag)
+
+pdf("gene annotation color.pdf",height = 1.2,width = 16)#
+p=ggplot(pp20,aes(itag,name))+
+  geom_tile(aes(fill=type2))+
+  scale_y_continuous(limits = c(0.5,1.5), breaks = c(0.5,1.5))+
+  scale_fill_discrete(limits = c(1,2,3))+
+  theme_bw()+
+  theme(panel.border = element_blank(),panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  theme(axis.text.x=element_text(color="black",size=.1, angle=90, hjust=1, vjust=1))+
+  #scale_color_manual(values=col), scale_fill_brewer(palette=col, scale_fill_manual(values=col)
+  scale_fill_gradient2(low = "green", mid="black", high = "red",midpoint = 2)
+print(p)
+dev.off()
+
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#Compute correlation matrix.  
+res <- cor(my_data)
+#Note that, if your data contain missing values, use the following R code to handle missing values by case-wise deletion.
+#res <- cor(my_data, use = "complete.obs")
+res1=round(res, 2)
+```
+
+```{r}
+#A simple function to format the correlation matrix
+#flattenCorrMatrix
+#cormat : matrix of the correlation coefficients
+#pmat : matrix of the correlation p-values
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+#This section provides a simple function for formatting a correlation matrix into a table with 4 columns containing :
+# Column 1 : row names (variable 1 for the correlation test)
+# Column 2 : column names (variable 2 for the correlation test)
+# Column 3 : the correlation coefficients
+# Column 4 : the p-values of the correlations
+# Example of usage :
+# res2<-rcorr(as.matrix(mtcars[,1:7]))
+edge.r.p=flattenCorrMatrix(p.res2$r, p.res2$P)
+head(edge.r.p)
+edge.r.p=edge.r.p[edge.r.p$p<=0.01,]
+write.csv(edge.r.p,"leaf_sugar_GO genes edge.r.p.csv",row.names = F)
+
+```
+
+```{r eval=FALSE, include=FALSE}
+#Use corrplot() function: Draw a correlogram
+#Install corrplot:
+# install.packages("corrplot")
+library(corrplot)
+
+corrplot(res2$r, type="upper", order="hclust", p.mat = res2$P, sig.level = 0.01)
+# Leave blank on no significant coefficient
+corrplot(res2$r, type="upper", order="hclust", p.mat = res2$P, sig.level = 0.01, insig = "blank")
+
+#Customize the correlogram
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA","#000099"))
+corrplot(res2$r, method="color", col=col(200),
+         type="upper", order="hclust", 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         p.mat = res2$P, sig.level = 0.01, insig = "blank", 
+         # hide correlation coefficient on the principal diagonal
+         diag=FALSE
+         )
+```
+
+```{r eval=FALSE, include=FALSE}
+#Use heatmap()
+col<- colorRampPalette(c("blue", "white", "red"))(20)
+pdf("leaf_sugar_GO genes corr heatmap.pdf")
+heatmap(x = res2$r,  hclustfun = hclust, col = col, symm = TRUE)
+dev.off()
+
+#save tree
+hc <- hclust(dist(res2$r))
+dd <- as.dendrogram(hc)
+# order.dendrogram(dd)
+cluster0 <- as.data.frame(cutree(hc, k = 4))
+write.csv(cluster0,"leaf_sugar_GO genes corr heatmap order.csv")
+
+```

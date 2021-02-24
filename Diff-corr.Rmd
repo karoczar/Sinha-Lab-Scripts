@@ -1,0 +1,272 @@
+---
+title: "DEG network (Lukullus and bip0663) vs (M82 and bip2)"
+author: "Xiaoyi"
+output: html_notebook
+
+---
+
+
+*lib*
+```{r}
+library(reshape)
+library(reshape2)
+```
+
+*data preparation*
+```{r}
+list.deg <- read.csv("DEG-clc.csv", header = T)#DEG
+# list.lc <- read.delim("LC+.txt", header = T)#LC
+# list.vas <- read.csv("vascular.csv",header = T)#va
+
+# list.deg=subset(list.deg,list.deg$analysistype %in% c("Lukullus vs M82","bip0663 vs bip2"))
+list.deg <- list.deg[1]#[list.deg$type=="bip0663 vs lukullus",]"HB vs LB
+# list.lc <- list.lc[2];colnames(list.lc) <- "ITAG"
+# list.vas <- list.vas[1];colnames(list.vas) <- "ITAG"
+# 
+# rebind1 <- rbind.data.frame(list.lc,list.vas,list.deg);rebind1=unique(rebind1)
+rebind1 <- list.deg
+head(rebind1)
+
+# rebind1 <- as.data.frame(rebind1[!duplicated(rebind1$itag),]) 
+# colnames(rebind2)<-"itag"
+list.counts <- read.csv("counts_tpm.csv",header=TRUE,row.names = 1)#raw counts
+
+rebind4 <- subset(list.counts,rownames(list.counts) %in% rebind1$gene ==T)
+#split by genotype
+# M82 <- rebind4[grep("M82|bip2",colnames(rebind4))]
+# Lukullus <- rebind4[grep("Luk|bip0663",colnames(rebind4))]
+
+BIP <- rebind4[grep("bip0663",colnames(rebind4))]
+Lukullus <- rebind4[grep("Luk",colnames(rebind4))]
+
+#cut off by reads > 0
+  BIP <- BIP[rowSums(BIP >= 1) >= 0.5,]
+  Lukullus <- Lukullus[rowSums(Lukullus >= 1) >= 0.5,]
+# M82 <- M82[rowSums(M82)>0,,]
+# Lukullus<- Lukullus[rowSums(Lukullus)>0,,]
+```
+
+*WGCNA network bip663*
+```{r}
+Y.u=t(log(BIP+(1e-6)))
+par(mfrow=c(2,1))
+hist(as.matrix(BIP), breaks=50, main="normalized counts")
+hist(as.vector(Y.u), breaks=50, main="logarithm of the normalized counts")
+par(mfrow=c(1,1))
+
+### make correlation table
+corr.u=cor(Y.u)
+dim(corr.u)
+corr.s=cor(Y.u, method="spearman")
+hist(corr.s[upper.tri(corr.s)])
+hist(corr.u[upper.tri(corr.u)])
+
+### fishers-z transformation (to make the sample correlation more comparable), 
+n=16 ### this is the sample size 
+z.s= sqrt(n-3)*0.5*log((1+corr.u)/(1-corr.u))#z.s= sqrt(n-3)*0.5*log((1+corr.s)/(1-corr.s))
+summary(z.s[upper.tri(z.s)])
+hist(z.s[upper.tri(z.s)]) # looks normal
+
+### cut off 
+thre.z=qnorm(0.9999999999)  ## normal quanitle 
+adjcent.z=abs(z.s)>thre.z  ## symmetric matrix: 1: there is an edge; 0 : there is no edge 
+diag(adjcent.z)=0  ## genes do not connect themselves in the network
+rownames(adjcent.z)=rownames(corr.u)
+colnames(adjcent.z)=colnames(corr.u)
+sum(adjcent.z)/2  
+
+#save adjacency matrix
+#write.csv(adjcent.z, "chamber_pseudo_adjacency_matrix.csv")
+
+### community detection methods on the subgraph
+## set up graph
+index=rowSums(adjcent.z)>0
+weight.adjcent.z=adjcent.z[index,index]
+library(igraph)
+g.temp=graph.adjacency(weight.adjcent.z, mode="undirected", diag=FALSE)
+
+## fastgreedy.community
+community.fastgreedy=fastgreedy.community(g.temp)
+community.fastgreedy
+# Graph community structure calculated with the fast greedy algorithm
+# Number of communities (best split): 15 
+# Modularity (best split): 0.116111 (above 0.3 is a good indicator of significant community structure in a network)
+
+table(community.fastgreedy$membership) #size of each cluster
+
+## betweenness and hub
+## betweenness: The vertex and edge betweenness are (roughly) defined by the number of geodesics (shortest paths) going through a vertex or an edge.
+hist(betweenness(g.temp))
+b <- betweenness(g.temp, normalized=TRUE)
+
+## extract No. of edges
+df.z.g=rowSums(weight.adjcent.z)
+hub <- df.z.g
+
+## community
+c <- community.fastgreedy$membership
+
+key <- cbind(b, hub, c)
+#write.csv(data.frame(key),"bip0663_key.genes.csv")
+
+### visualization 
+V(g.temp)$color <- "gray57"
+V(g.temp)[community.fastgreedy$membership==1]$color <- "mediumturquoise"
+V(g.temp)[community.fastgreedy$membership==2]$color <- "lightpink2"
+V(g.temp)[community.fastgreedy$membership==3]$color <- "indianred2"
+V(g.temp)[community.fastgreedy$membership==4]$color <- "deepskyblue4"
+V(g.temp)[community.fastgreedy$membership==5]$color <- "gray23"
+V(g.temp)[df.z.g>219]$color <- "darkred" # hub genes
+v.label=rep("",length(V(g.temp)))
+v.label=V(g.temp)$name  # if you want to put gene name
+v.size=rep(2,length(V(g.temp)))
+v.size[V(g.temp)$name %in% "BOPa"]=4 # if you want to change size of specific nodes
+V(g.temp)$shape <- "circle"
+pdf("bip0663.pdf", useDingbats=FALSE) #M82andbip2
+plot(g.temp, layout=layout.kamada.kawai(g.temp), vertex.size=v.size, vertex.frame.color=NA,vertex.label=v.label, vertex.label.cex=0.1,edge.color="gray57", edge.width =0.4)
+dev.off()
+```
+*WGCNA network lu*
+```{r}
+Y.u=t(log(Lukullus+(1e-6)))
+par(mfrow=c(2,1))
+hist(as.matrix(Lukullus), breaks=50, main="normalized counts")
+hist(as.vector(Y.u), breaks=50, main="logarithm of the normalized counts")
+par(mfrow=c(1,1))
+
+### make correlation table
+corr.u=cor(Y.u)
+dim(corr.u)
+corr.s=cor(Y.u, method="spearman")
+hist(corr.s[upper.tri(corr.s)])
+hist(corr.u[upper.tri(corr.u)])
+
+### fishers-z transformation (to make the sample correlation more comparable), 
+n=15 ### this is the sample size 
+z.s= sqrt(n-3)*0.5*log((1+corr.u)/(1-corr.u))#z.s= sqrt(n-3)*0.5*log((1+corr.s)/(1-corr.s))
+summary(z.s[upper.tri(z.s)])
+hist(z.s[upper.tri(z.s)]) # looks normal
+
+### cut off 
+thre.z=qnorm(0.9999999999)  ## normal quanitle 
+adjcent.z=abs(z.s)>thre.z  ## symmetric matrix: 1: there is an edge; 0 : there is no edge 
+diag(adjcent.z)=0  ## genes do not connect themselves in the network
+rownames(adjcent.z)=rownames(corr.u)
+colnames(adjcent.z)=colnames(corr.u)
+sum(adjcent.z)/2  
+
+#save adjacency matrix
+#write.csv(adjcent.z, "chamber_pseudo_adjacency_matrix.csv")
+
+### community detection methods on the subgraph
+## set up graph
+index=rowSums(adjcent.z)>0
+weight.adjcent.z=adjcent.z[index,index]
+library(igraph)
+g.temp=graph.adjacency(weight.adjcent.z, mode="undirected", diag=FALSE)
+
+## fastgreedy.community
+community.fastgreedy=fastgreedy.community(g.temp)
+community.fastgreedy
+# Graph community structure calculated with the fast greedy algorithm
+# Number of communities (best split): 15 
+# Modularity (best split): 0.116111 (above 0.3 is a good indicator of significant community structure in a network)
+
+table(community.fastgreedy$membership) #size of each cluster
+
+## betweenness and hub
+## betweenness: The vertex and edge betweenness are (roughly) defined by the number of geodesics (shortest paths) going through a vertex or an edge.
+hist(betweenness(g.temp))
+b <- betweenness(g.temp, normalized=TRUE)
+
+## extract No. of edges
+df.z.g=rowSums(weight.adjcent.z)
+hub <- df.z.g
+
+## community
+c <- community.fastgreedy$membership
+
+key <- cbind(b, hub, c)
+#write.csv(data.frame(key),"bip0663_key.genes.csv")
+
+### visualization 
+V(g.temp)$color <- "gray57"
+V(g.temp)[community.fastgreedy$membership==1]$color <- "mediumturquoise"
+V(g.temp)[community.fastgreedy$membership==2]$color <- "lightpink2"
+V(g.temp)[community.fastgreedy$membership==3]$color <- "indianred2"
+V(g.temp)[community.fastgreedy$membership==4]$color <- "deepskyblue4"
+V(g.temp)[community.fastgreedy$membership==5]$color <- "gray23"
+V(g.temp)[df.z.g>219]$color <- "darkred" # hub genes
+v.label=rep("",length(V(g.temp)))
+v.label=V(g.temp)$name  # if you want to put gene name
+v.size=rep(2,length(V(g.temp)))
+v.size[V(g.temp)$name %in% "BOPa"]=4 # if you want to change size of specific nodes
+V(g.temp)$shape <- "circle"
+pdf("Lukullus.pdf", useDingbats=FALSE) #andbip0663
+plot(g.temp, layout=layout.kamada.kawai(g.temp), vertex.size=v.size, vertex.frame.color=NA,vertex.label=v.label, vertex.label.cex=0.1,edge.color="gray57", edge.width =0.4)
+dev.off()
+```
+
+*diffcorr*
+```{r}
+##
+BIP <- subset(BIP,rownames(BIP) %in% rownames(Lukullus)==T)
+Lukullus <- subset(Lukullus,rownames(Lukullus) %in% rownames(BIP)==T)
+data <- cbind(BIP,Lukullus)
+
+#filtering
+# library(genefilter)
+# param1 <- as.integer(dim(data)[2] * 0.999999999999999) ## the number of samples
+# param2 <- 1 ## normalized count
+# f1 <- kOverA(param1, A=param2)
+# ffun <- filterfun(f1)
+# obj <- genefilter(data, ffun)
+# data <- data[obj,]
+dim(data)
+
+
+#some modifications of the data
+miss.imp <- function(data) {
+  tmp <- data * 10000+1
+  data <- tmp/10000
+##   data[data==0] <- NA
+##   sum(is.na(data))
+##   pc <- pca(data, nPcs=3, method="ppca")
+##   data <- completeObs(pc)
+## write.table(data, file="imputed_data.txt", row.names=TRUE, col.names=TRUE, sep="\t")
+}
+mat <- data.frame(data)
+dim(mat)
+
+
+#some modifications of the data
+library(MASS)
+x <- mat
+# x[x>=3000] <- 3000
+head(x)
+hist(t(x), col="gray", xlab="Normalized counts") ## without Log-transform
+hist(t(log2(x)), col="gray", xlab="Normalized counts")
+
+
+#loading data
+data1 <- miss.imp(data)
+data1 <- log2(data1)
+dim(data1)
+
+
+#some preparations for DiffCorr
+ind.M <- c(1:16)
+ind.L <- c(17:31)
+
+
+#loading packages
+library(pcaMethods)
+library(igraph)
+library(fdrtool)
+library(multtest)
+library(DiffCorr)
+
+#detaction DiffCorr pair
+comp.2.cc.fdr(output.file="DiffCorr_bip0663vslu.txt", data1[,ind.M], data1[,ind.L], threshold=0.05)
+# comp.2.cc.fdr(output.file="DiffCorr_M8bvsLub.txt", data1[,ind.M], data1[,ind.L], threshold=0.05)
+```

@@ -1,0 +1,220 @@
+---
+title: "WEIGHTED EDGES_ GENE COEXPRESSION NETWORK"
+date: "10252018"
+author: "Hokuto Nakayama"
+modified: "Karo Czarnecki & Min-Yao Jhu & Steven D. Rowland"
+---
+
+
+#load package
+```{r}
+library(reshape)
+```
+
+
+#load data
+```{r}
+  counts=read.csv ("counts_tpm.csv")
+# counts1=read.csv("M82 sugar network.csv", row.names = 1)
+str(counts)
+dim(counts)
+```
+
+
+#remove 0
+```{r}
+# counts1 <- counts[rowSums(counts) > 0,]
+# dim(counts1)
+
+```
+
+
+#add col/rownames
+```{r}
+# samples=colnames(counts1)
+# genes=rownames(counts1)
+```
+
+
+#check histogram
+```{r}
+# Y.u=t(log(counts1+(1e-6)))
+# par(mfrow=c(2,1))
+# hist(as.matrix(counts1), breaks=50, main="normalized counts")
+# hist(as.vector(Y.u), breaks=50, main="logarithm of the normalized counts")
+# par(mfrow=c(1,1))
+```
+
+
+#KARO--normalize data instead of (above) transformation
+```{r}
+library(RSMod)
+norm.counts=data_norm(trans = counts)
+t.norm.counts=t(norm.counts)
+write.csv(norm.counts, "normalized-counts.csv")
+```
+
+#calcurate corr
+```{r}
+corr.counts=cor(t.norm.counts, method="pearson")
+hist(corr.counts[upper.tri(corr.counts)])
+```
+
+#calcurate corr
+```{r}
+# corr.u=cor(Y.u)
+# dim(corr.u)
+# corr.s=cor(Y.u, method="pearson")
+# hist(corr.s[upper.tri(corr.s)])
+```
+
+
+#KARO-- fisher's Z transformation
+```{r}
+n=ncol(counts)  -1    ### NOTE: this is your sample size (library#)
+z.s=0.5*log((1+corr.counts)/(1-corr.counts))
+summary(z.s[upper.tri(z.s)])
+hist(z.s[upper.tri(z.s)])
+```
+
+#cut off
+```{r}
+
+z.s[is.na(z.s)] <- 0
+
+thre.z=qnorm(0.8)  ## normal quanitle
+adjcent.z=abs(z.s)>thre.z  ## symmetric ajacency matrix: 1: there is an edge; 0 : there is no edge
+diag(adjcent.z)=0  ## genes do not connect themselves in the network
+# rownames(adjcent.z)=rownames(corr.u)
+# colnames(adjcent.z)=colnames(corr.u)
+sum(adjcent.z, na.rm = TRUE)/2
+```
+
+## WEIGHTED ADJACENCY MATRIX
+```{r}
+
+z.s[is.na(z.s)] <- 0
+
+
+dim(z.s)
+dim.karo=nrow(z.s)
+pos.thresh=qnorm(0.8)
+neg.thresh=-qnorm(0.8)
+karo.matrix=matrix(nrow=nrow(z.s),ncol = ncol(z.s))
+
+
+
+ for(k in 1:dim.karo){
+  for(j in (k+1):dim.karo){
+    if(j>dim.karo){break}
+        
+    if(z.s[k,j]>pos.thresh){
+    karo.matrix[k,j]=1
+      }
+
+    if(z.s[k,j]< neg.thresh){
+        karo.matrix[k,j]=-1
+          }
+  }}
+
+colnames(karo.matrix)=colnames(z.s)
+rownames(karo.matrix)=rownames(z.s)
+
+karo.matrix[is.na(karo.matrix)] <- 0
+sum(abs(karo.matrix))
+
+```
+
+#save the data
+```{r}
+# write.csv(adjcent.z, "M82 75_edges.csv")
+```
+
+
+```{r}
+##convert to edgelist for use in cytoscape
+
+library(igraph)
+g <- graph.adjacency(karo.matrix,weighted = TRUE,diag = FALSE)
+dim(karo.matrix)
+karo_edge=get.data.frame(g)
+#write.csv(karo_edge,file="Module 2_edges.csv")
+karo_edge
+
+```
+
+
+#calculate commun
+```{r}
+index=rowSums(adjcent.z)>0
+weight.adjcent.z=adjcent.z[index,index]
+dim(adjcent.z)
+dim(weight.adjcent.z)
+library(igraph)
+g.temp=graph.adjacency(weight.adjcent.z, mode="undirected", diag=FALSE)
+
+community.fastgreedy=fastgreedy.community(g.temp)
+community.fastgreedy
+
+table(community.fastgreedy$membership)
+```
+
+
+#betweenness
+```{r}
+hist(betweenness(g.temp))
+b <- betweenness(g.temp, normalized=TRUE)
+```
+
+
+#edge#
+```{r}
+df.z.g=abs(rowSums(weight.adjcent.z))
+hub <- df.z.g
+```
+
+
+#commu#
+```{r}
+c <- community.fastgreedy$membership
+```
+
+
+#save the data
+```{r}
+#can be imported to cytoscape
+key <- cbind(b, hub, c)
+dim(key)
+write.csv(data.frame(key),"sugar network node attributes.csv")
+```
+
+
+#visualization
+```{r}
+V(g.temp)$color <- "gray57"
+for(i in 1:length(unique(community.fastgreedy$membership))){
+  V(g.temp)[community.fastgreedy$membership==i]$color=i
+ 
+  if(length(which(community.fastgreedy$membership==i))<7){
+    V(g.temp)[community.fastgreedy$membership==i]$color="grey"
+  }
+}
+V(g.temp)[df.z.g>25]$color <- "darkred" # You may also want to play around with hub gene thresholds
+v.label=rep("",length(V(g.temp)))
+v.label=V(g.temp)$name  # if you want to put gene name
+v.size=rep(5,length(V(g.temp)))
+# v.size[V(g.temp)$name %in% "AP2"]=4 # if you want to change size of specific nodes
+V(g.temp)$shape <- "circle"
+pdf("sugar network7.pdf", useDingbats=FALSE)
+plot(g.temp, layout=layout.kamada.kawai(g.temp), vertex.size=v.size, vertex.frame.color=NA,vertex.label=v.label, vertex.label.cex=0.05,edge.color="gray57", edge.width =0.2)
+# dev.off()
+#plot(g.temp)
+```
+
+
+```{r}
+#KAROtransfer to cytoscape
+library(RCy3)
+createNetworkFromIgraph(g,"sugar network")
+```
+
